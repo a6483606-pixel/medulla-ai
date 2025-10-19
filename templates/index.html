@@ -1,179 +1,243 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Medulla AI</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css"/>
 </head>
 <body>
   <div class="container">
     <header class="topbar">
-      <div class="title-area">
+      <div class="brand">
         <h1>🧠 Medulla AI</h1>
-        <p class="sub">Ask anything. Medulla replies — and (optionally) speaks.</p>
+        <p class="tag">Simple. Fast. Friendly.</p>
       </div>
 
-      <div class="controls" role="toolbar" aria-label="Controls">
-        <button id="stop-toggle" class="control-btn" title="Prevent Medulla from answering">⛔ Stop</button>
-        <button id="mute-toggle" class="control-btn" title="Toggle speech on/off">🔇 Mute</button>
-        <button id="clear-chat" class="control-btn danger" title="Delete chat">🗑 Delete</button>
+      <div class="actions" role="toolbar" aria-label="Controls">
+        <button id="stop-btn" class="btn ghost" title="Stop/Resume AI">⛔ Stop</button>
+        <button id="mute-btn" class="btn ghost" title="Mute/Unmute TTS">🔇 Mute</button>
+        <button id="clear-btn" class="btn danger" title="Delete chat">🗑 Delete</button>
       </div>
     </header>
 
-    <main>
-      <div id="status-bar" class="status hidden" aria-live="polite"></div>
-      <div id="chat" class="chat" role="log" aria-live="polite"></div>
-    </main>
+    <section class="controls-row">
+      <div class="voice-controls">
+        <button id="mic-btn" class="btn primary" title="Hold to speak or tap to toggle">
+          🎙️ Speak
+        </button>
 
-    <footer class="input-area" id="footer">
-      <input id="input" type="text" placeholder="Type your message..." autocomplete="off" inputmode="text" />
-      <button id="send" aria-label="Send message">Send</button>
+        <label class="select-label">
+          AI Voice:
+          <select id="voice-select" class="select"></select>
+        </label>
+      </div>
+      <div id="status" class="status hidden" aria-live="polite"></div>
+    </section>
+
+    <main id="chat" class="chat" role="log" aria-live="polite"></main>
+
+    <footer class="composer">
+      <input id="input" type="text" placeholder="Type your message…" autocomplete="off"/>
+      <button id="send" class="btn accent">Send</button>
     </footer>
   </div>
 
   <script>
-    // Mobile viewport fix: set --vh to 1% of the viewport height
-    function setVh() {
-      const vh = window.innerHeight * 0.01;
-      document.documentElement.style.setProperty('--vh', `${vh}px`);
-    }
-    setVh();
-    window.addEventListener('resize', setVh);
-
-    // --- Elements ---
+    // ===== Elements =====
     const chat = document.getElementById("chat");
     const input = document.getElementById("input");
-    const send = document.getElementById("send");
-    const stopToggle = document.getElementById("stop-toggle");
-    const muteToggle = document.getElementById("mute-toggle");
-    const clearBtn = document.getElementById("clear-chat");
-    const statusBar = document.getElementById("status-bar");
-    const footer = document.getElementById("footer");
+    const sendBtn = document.getElementById("send");
+    const stopBtn = document.getElementById("stop-btn");
+    const muteBtn = document.getElementById("mute-btn");
+    const clearBtn = document.getElementById("clear-btn");
+    const micBtn = document.getElementById("mic-btn");
+    const voiceSelect = document.getElementById("voice-select");
+    const statusBar = document.getElementById("status");
 
-    // --- State flags ---
+    // ===== State =====
     let isStopped = false;
     let isMuted = false;
-    let thinkingRequest = null;
+    let isListening = false;
+    let currentVoice = null;
 
-    // --- UI helpers ---
+    // ===== Helpers =====
     function addMessage(text, who) {
-      const el = document.createElement("div");
-      el.className = "message " + who;
-      el.innerText = text;
-      chat.appendChild(el);
+      const bubble = document.createElement("div");
+      bubble.className = "msg " + (who === "user" ? "user" : who === "bot" ? "bot" : "note");
+      bubble.innerText = text;
+      chat.appendChild(bubble);
       chat.scrollTop = chat.scrollHeight;
-      return el;
+      return bubble;
     }
 
-    function setStatus(text, show=true, colorClass="") {
+    function setStatus(text, show = true, type = "") {
       if (!show) {
-        statusBar.classList.add("hidden");
-        statusBar.innerText = "";
         statusBar.className = "status hidden";
+        statusBar.innerText = "";
         return;
       }
+      statusBar.className = "status " + type;
       statusBar.innerText = text;
-      statusBar.classList.remove("hidden");
-      statusBar.className = "status " + (colorClass || "");
     }
 
-    // --- Sanitizer for speech output ---
+    // ===== Sanitizer for TTS =====
     function sanitizeForSpeech(text) {
       if (!text) return "";
+      let t = text.replace(/[*`_#•►→·•°]/g, " ");
+      t = t.replace(/\[([^\]]+)\]\((?:[^)]+)\)/g, "$1");      // [x](y) -> x
+      t = t.replace(/```[\s\S]*?```/g, " ");                  // code fences
+      t = t.replace(/`([^`]+)`/g, "$1");                      // inline code
+      t = t.replace(/\b(asterisk|star|dash|hyphen|bullet|dot)\b/gi, " ");
+      t = t.replace(/\n{2,}/g, ". ");
+      t = t.replace(/\n/g, " ");
+      t = t.replace(/[-*_]{2,}/g, " ");
+      t = t.replace(/\s+/g, " ").trim();
+      return t;
+    }
 
-      text = text.replace(/[*`_#•►→•°·]/g, " ");
-      text = text.replace(/\[([^\]]+)\]\((?:[^)]+)\)/g, "$1");
-      text = text.replace(/```[\s\S]*?```/g, " ");
-      text = text.replace(/`([^`]+)`/g, "$1");
-      text = text.replace(/\b(asterisk|star|dash|hyphen|bullet|dot)\b/gi, " ");
-      text = text.replace(/\n{2,}/g, ". ");
-      text = text.replace(/\n/g, " ");
-      text = text.replace(/[-*_]{2,}/g, " ");
-      text = text.replace(/\s+/g, " ").trim();
-      if (text.length === 0) return "";
-      return text;
+    // ===== Speech Synthesis (TTS) =====
+    function populateVoices() {
+      const voices = window.speechSynthesis.getVoices() || [];
+      // Prefer 2 female + 2 male English voices if available
+      const isEn = v => /en(-|_)?/i.test(v.lang || "");
+      const femKeys = ["aria", "jenny", "zoe", "sara", "natasha", "salli", "emma", "en-GB female", "en-US female"];
+      const maleKeys = ["guy", "brian", "matthew", "arthur", "daniel", "en-GB male", "en-US male", "george"];
+
+      const fem = voices.filter(v => isEn(v) && femKeys.some(k => (v.name || "").toLowerCase().includes(k))).slice(0, 2);
+      const male = voices.filter(v => isEn(v) && maleKeys.some(k => (v.name || "").toLowerCase().includes(k))).slice(0, 2);
+
+      let picked = [...fem, ...male];
+
+      // If we didn't get 4, fill with any English voices, then any remaining
+      if (picked.length < 4) {
+        const fill = voices.filter(v => !picked.includes(v) && isEn(v)).slice(0, 4 - picked.length);
+        picked = picked.concat(fill);
+      }
+      if (picked.length < 4) {
+        const fill2 = voices.filter(v => !picked.includes(v)).slice(0, 4 - picked.length);
+        picked = picked.concat(fill2);
+      }
+
+      voiceSelect.innerHTML = "";
+      picked.forEach((v, idx) => {
+        const opt = document.createElement("option");
+        opt.value = v.name;
+        opt.innerText = v.name || `Voice ${idx + 1}`;
+        voiceSelect.appendChild(opt);
+      });
+
+      // set currentVoice
+      const chosenName = voiceSelect.value;
+      currentVoice = (window.speechSynthesis.getVoices() || []).find(v => v.name === chosenName) || null;
     }
 
     function speak(text) {
       if (isMuted) return;
-      const sanitized = sanitizeForSpeech(text);
-      if (!("speechSynthesis" in window) || !sanitized) return;
+      const t = sanitizeForSpeech(text);
+      if (!("speechSynthesis" in window) || !t) return;
       try {
         window.speechSynthesis.cancel();
-        const u = new SpeechSynthesisUtterance(sanitized);
+        const u = new SpeechSynthesisUtterance(t);
+        if (currentVoice) u.voice = currentVoice;
         u.rate = 1;
         u.pitch = 1;
-        // Optional: set language for better pronunciation
-        // u.lang = 'en-IN';
         window.speechSynthesis.speak(u);
       } catch (e) {
         console.warn("Speech failed:", e);
       }
     }
 
-    // --- Controls behavior ---
-    function updateStopUI() {
-      stopToggle.classList.toggle("active", isStopped);
-      stopToggle.innerText = isStopped ? "▶ Resume" : "⛔ Stop";
+    voiceSelect.addEventListener("change", () => {
+      const voices = window.speechSynthesis.getVoices() || [];
+      currentVoice = voices.find(v => v.name === voiceSelect.value) || null;
+      setStatus(`AI voice set to: ${voiceSelect.value}`, true);
+      setTimeout(() => setStatus("", false), 1200);
+    });
+
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.onvoiceschanged = populateVoices;
+      // Some browsers need a kick to load voices
+      setTimeout(populateVoices, 300);
     }
 
-    stopToggle.addEventListener("click", () => {
-      isStopped = !isStopped;
-      updateStopUI();
-      setStatus(isStopped ? "AI stopped — resume to enable responses." : "AI running", isStopped);
-      if (!isStopped) setStatus("", false);
-    });
+    // ===== Speech Recognition (STT) =====
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recog = null;
+    if (SR) {
+      recog = new SR();
+      recog.lang = "en-US";           // change if you want another language
+      recog.interimResults = false;
+      recog.maxAlternatives = 1;
 
-    muteToggle.addEventListener("click", () => {
-      isMuted = !isMuted;
-      muteToggle.classList.toggle("active", isMuted);
-      muteToggle.innerText = isMuted ? "🔈 Unmute" : "🔇 Mute";
-    });
+      recog.onstart = () => {
+        isListening = true;
+        micBtn.classList.add("recording");
+        setStatus("Listening… speak now", true, "info");
+      };
+      recog.onend = () => {
+        isListening = false;
+        micBtn.classList.remove("recording");
+        setStatus("", false);
+      };
+      recog.onerror = (e) => {
+        isListening = false;
+        micBtn.classList.remove("recording");
+        setStatus("Mic error: " + (e.error || "unknown"), true, "warn");
+        setTimeout(() => setStatus("", false), 1500);
+      };
+      recog.onresult = (e) => {
+        const transcript = e.results?.[0]?.[0]?.transcript || "";
+        if (transcript) {
+          input.value = transcript;
+          addMessage("🎙️ " + transcript, "note");
+        }
+      };
+    } else {
+      micBtn.disabled = true;
+      micBtn.title = "Speech Recognition not supported in this browser";
+    }
 
-    clearBtn.addEventListener("click", () => {
-      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-      chat.innerHTML = "";
-      setStatus("Chat cleared", true);
-      setTimeout(() => setStatus("", false), 1000);
-    });
+    function toggleMic() {
+      if (!recog) return;
+      if (!isListening) {
+        try { recog.start(); } catch {}
+      } else {
+        try { recog.stop(); } catch {}
+      }
+    }
 
-    // --- Ensure input visible when keyboard opens on mobile ---
-    input.addEventListener('focus', () => {
-      // small delay so keyboard appears then scroll
-      setTimeout(() => {
-        footer.scrollIntoView({behavior: 'smooth', block: 'end'});
-      }, 300);
-    });
+    // Hold-to-talk as well as toggle:
+    micBtn.addEventListener("click", toggleMic);
+    micBtn.addEventListener("mousedown", () => { if (recog && !isListening) try{recog.start();}catch{} });
+    micBtn.addEventListener("mouseup",   () => { if (recog && isListening)  try{recog.stop();}catch{} });
+    micBtn.addEventListener("touchstart", (e) => { e.preventDefault(); if (recog && !isListening) try{recog.start();}catch{} }, {passive:false});
+    micBtn.addEventListener("touchend",   (e) => { e.preventDefault(); if (recog && isListening)  try{recog.stop();}catch{} }, {passive:false});
 
-    // --- Send message to backend ---
+    // ===== Chat actions =====
     async function sendMessage() {
       const text = input.value.trim();
       if (!text) return;
 
       if (isStopped) {
         addMessage("You: " + text, "user");
-        addMessage("Medulla: (AI stopped — resume to get an answer)", "bot");
+        addMessage("Medulla: (AI is stopped — resume to get an answer)", "bot");
         input.value = "";
         return;
       }
 
       input.value = "";
       addMessage("You: " + text, "user");
-      const statusEl = addMessage("Medulla is thinking...", "status");
+      const thinking = addMessage("Medulla is thinking…", "note");
 
       try {
-        thinkingRequest = fetch("/ask", {
+        const res = await fetch("/ask", {
           method: "POST",
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify({message: text})
         });
-
-        const res = await thinkingRequest;
-        thinkingRequest = null;
         const data = await res.json();
-
-        statusEl.remove();
+        thinking.remove();
 
         if (data.error) {
           addMessage("Error: " + data.error, "bot");
@@ -183,38 +247,45 @@
           speak(data.reply);
         }
       } catch (err) {
-        try { statusEl.remove(); } catch(e){}
+        try { thinking.remove(); } catch {}
         addMessage("Network error. Please try again.", "bot");
         speak("Network error. Please try again.");
         console.error(err);
-      } finally {
-        // ensure footer visible after response (keyboard may still be open)
-        setTimeout(() => footer.scrollIntoView({behavior: 'smooth', block: 'end'}), 200);
       }
     }
 
-    // --- Keyboard & button bindings ---
-    send.addEventListener("click", sendMessage);
+    sendBtn.addEventListener("click", sendMessage);
     input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        sendMessage();
-      }
+      if (e.key === "Enter") sendMessage();
     });
 
-    // Larger touch targets for mobile: also respond to touchstart
-    [stopToggle, muteToggle, clearBtn, send].forEach(btn => {
-      btn.addEventListener('touchstart', (e) => { e.preventDefault(); btn.click(); }, {passive:false});
+    stopBtn.addEventListener("click", () => {
+      isStopped = !isStopped;
+      stopBtn.classList.toggle("active", isStopped);
+      stopBtn.innerText = isStopped ? "▶ Resume" : "⛔ Stop";
+      setStatus(isStopped ? "AI stopped — resume to enable answers." : "AI running", isStopped, "warn");
+      if (!isStopped) setStatus("", false);
     });
 
-    // Focus input on load
-    window.addEventListener("load", () => {
-      // Use a small delay to allow mobile browsers to layout correctly
-      setTimeout(() => { input.focus(); footer.scrollIntoView(); }, 200);
-      setStatus("Ready", true);
+    muteBtn.addEventListener("click", () => {
+      isMuted = !isMuted;
+      muteBtn.classList.toggle("active", isMuted);
+      muteBtn.innerText = isMuted ? "🔈 Unmute" : "🔇 Mute";
+      setStatus(isMuted ? "Voice muted" : "Voice on", true);
+      setTimeout(() => setStatus("", false), 800);
+      if (isMuted && "speechSynthesis" in window) window.speechSynthesis.cancel();
+    });
+
+    clearBtn.addEventListener("click", () => {
+      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+      chat.innerHTML = "";
+      setStatus("Chat cleared", true);
       setTimeout(() => setStatus("", false), 800);
     });
 
+    // Focus on load
+    window.addEventListener("load", () => input.focus());
   </script>
 </body>
 </html>
+
