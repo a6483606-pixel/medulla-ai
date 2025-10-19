@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Medulla AI</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="container">
+    <header class="topbar">
+      <div class="title-area">
+        <h1>🧠 Medulla AI</h1>
+        <p class="sub">Ask anything. Medulla replies — and (optionally) speaks.</p>
+      </div>
+
+      <div class="controls" role="toolbar" aria-label="Controls">
+        <button id="stop-toggle" class="control-btn" title="Prevent Medulla from answering">⛔ Stop</button>
+        <button id="mute-toggle" class="control-btn" title="Toggle speech on/off">🔇 Mute</button>
+        <button id="clear-chat" class="control-btn danger" title="Delete chat">🗑 Delete</button>
+      </div>
+    </header>
+
+    <main>
+      <div id="status-bar" class="status hidden" aria-live="polite"></div>
+      <div id="chat" class="chat" role="log" aria-live="polite"></div>
+    </main>
+
+    <footer class="input-area" id="footer">
+      <input id="input" type="text" placeholder="Type your message..." autocomplete="off" inputmode="text" />
+      <button id="send" aria-label="Send message">Send</button>
+    </footer>
+  </div>
+
+  <script>
+    // Mobile viewport fix: set --vh to 1% of the viewport height
+    function setVh() {
+      const vh = window.innerHeight * 0.01;
+      document.documentElement.style.setProperty('--vh', `${vh}px`);
+    }
+    setVh();
+    window.addEventListener('resize', setVh);
+
+    // --- Elements ---
+    const chat = document.getElementById("chat");
+    const input = document.getElementById("input");
+    const send = document.getElementById("send");
+    const stopToggle = document.getElementById("stop-toggle");
+    const muteToggle = document.getElementById("mute-toggle");
+    const clearBtn = document.getElementById("clear-chat");
+    const statusBar = document.getElementById("status-bar");
+    const footer = document.getElementById("footer");
+
+    // --- State flags ---
+    let isStopped = false;
+    let isMuted = false;
+    let thinkingRequest = null;
+
+    // --- UI helpers ---
+    function addMessage(text, who) {
+      const el = document.createElement("div");
+      el.className = "message " + who;
+      el.innerText = text;
+      chat.appendChild(el);
+      chat.scrollTop = chat.scrollHeight;
+      return el;
+    }
+
+    function setStatus(text, show=true, colorClass="") {
+      if (!show) {
+        statusBar.classList.add("hidden");
+        statusBar.innerText = "";
+        statusBar.className = "status hidden";
+        return;
+      }
+      statusBar.innerText = text;
+      statusBar.classList.remove("hidden");
+      statusBar.className = "status " + (colorClass || "");
+    }
+
+    // --- Sanitizer for speech output ---
+    function sanitizeForSpeech(text) {
+      if (!text) return "";
+
+      text = text.replace(/[*`_#•►→•°·]/g, " ");
+      text = text.replace(/\[([^\]]+)\]\((?:[^)]+)\)/g, "$1");
+      text = text.replace(/```[\s\S]*?```/g, " ");
+      text = text.replace(/`([^`]+)`/g, "$1");
+      text = text.replace(/\b(asterisk|star|dash|hyphen|bullet|dot)\b/gi, " ");
+      text = text.replace(/\n{2,}/g, ". ");
+      text = text.replace(/\n/g, " ");
+      text = text.replace(/[-*_]{2,}/g, " ");
+      text = text.replace(/\s+/g, " ").trim();
+      if (text.length === 0) return "";
+      return text;
+    }
+
+    function speak(text) {
+      if (isMuted) return;
+      const sanitized = sanitizeForSpeech(text);
+      if (!("speechSynthesis" in window) || !sanitized) return;
+      try {
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(sanitized);
+        u.rate = 1;
+        u.pitch = 1;
+        // Optional: set language for better pronunciation
+        // u.lang = 'en-IN';
+        window.speechSynthesis.speak(u);
+      } catch (e) {
+        console.warn("Speech failed:", e);
+      }
+    }
+
+    // --- Controls behavior ---
+    function updateStopUI() {
+      stopToggle.classList.toggle("active", isStopped);
+      stopToggle.innerText = isStopped ? "▶ Resume" : "⛔ Stop";
+    }
+
+    stopToggle.addEventListener("click", () => {
+      isStopped = !isStopped;
+      updateStopUI();
+      setStatus(isStopped ? "AI stopped — resume to enable responses." : "AI running", isStopped);
+      if (!isStopped) setStatus("", false);
+    });
+
+    muteToggle.addEventListener("click", () => {
+      isMuted = !isMuted;
+      muteToggle.classList.toggle("active", isMuted);
+      muteToggle.innerText = isMuted ? "🔈 Unmute" : "🔇 Mute";
+    });
+
+    clearBtn.addEventListener("click", () => {
+      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+      chat.innerHTML = "";
+      setStatus("Chat cleared", true);
+      setTimeout(() => setStatus("", false), 1000);
+    });
+
+    // --- Ensure input visible when keyboard opens on mobile ---
+    input.addEventListener('focus', () => {
+      // small delay so keyboard appears then scroll
+      setTimeout(() => {
+        footer.scrollIntoView({behavior: 'smooth', block: 'end'});
+      }, 300);
+    });
+
+    // --- Send message to backend ---
+    async function sendMessage() {
+      const text = input.value.trim();
+      if (!text) return;
+
+      if (isStopped) {
+        addMessage("You: " + text, "user");
+        addMessage("Medulla: (AI stopped — resume to get an answer)", "bot");
+        input.value = "";
+        return;
+      }
+
+      input.value = "";
+      addMessage("You: " + text, "user");
+      const statusEl = addMessage("Medulla is thinking...", "status");
+
+      try {
+        thinkingRequest = fetch("/ask", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({message: text})
+        });
+
+        const res = await thinkingRequest;
+        thinkingRequest = null;
+        const data = await res.json();
+
+        statusEl.remove();
+
+        if (data.error) {
+          addMessage("Error: " + data.error, "bot");
+          speak("Sorry, I encountered an error.");
+        } else {
+          addMessage("Medulla: " + data.reply, "bot");
+          speak(data.reply);
+        }
+      } catch (err) {
+        try { statusEl.remove(); } catch(e){}
+        addMessage("Network error. Please try again.", "bot");
+        speak("Network error. Please try again.");
+        console.error(err);
+      } finally {
+        // ensure footer visible after response (keyboard may still be open)
+        setTimeout(() => footer.scrollIntoView({behavior: 'smooth', block: 'end'}), 200);
+      }
+    }
+
+    // --- Keyboard & button bindings ---
+    send.addEventListener("click", sendMessage);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    // Larger touch targets for mobile: also respond to touchstart
+    [stopToggle, muteToggle, clearBtn, send].forEach(btn => {
+      btn.addEventListener('touchstart', (e) => { e.preventDefault(); btn.click(); }, {passive:false});
+    });
+
+    // Focus input on load
+    window.addEventListener("load", () => {
+      // Use a small delay to allow mobile browsers to layout correctly
+      setTimeout(() => { input.focus(); footer.scrollIntoView(); }, 200);
+      setStatus("Ready", true);
+      setTimeout(() => setStatus("", false), 800);
+    });
+
+  </script>
+</body>
+</html>
