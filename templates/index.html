@@ -3,238 +3,94 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Medulla AI</title>
+  <title>Medulla AI — Chat</title>
   <link rel="stylesheet" href="/static/style.css"/>
 </head>
-<body>
-  <div class="container">
+<body class="theme-red">
 
-    <!-- ===== TOP BAR ===== -->
-    <header class="topbar">
-      <div class="brand">
-        <h1>🧠 Medulla AI</h1>
-        <p class="tag">Simple • Fast • Friendly</p>
-      </div>
-      <div class="actions">
-        <button id="stop-btn" class="btn ghost">⛔ Stop</button>
-        <button id="mute-btn" class="btn ghost">🔇 Mute</button>
-        <button id="clear-btn" class="btn danger">🗑 Delete</button>
-      </div>
-    </header>
-
-    <!-- ===== VOICE + STATUS ROW ===== -->
-    <section class="controls-row">
-      <div class="voice-controls">
-        <button id="mic-btn" class="btn primary">🎙️ Speak</button>
-        <label class="select-label">
-          AI Voice:
-          <select id="voice-select" class="select"></select>
-        </label>
-      </div>
-      <div id="status" class="status hidden"></div>
-    </section>
-
-    <!-- ===== CHAT LOG ===== -->
-    <main id="chat" class="chat" role="log" aria-live="polite"></main>
-
-    <!-- ===== COMPOSER ===== -->
-    <footer class="composer">
-      <input id="input" type="text" placeholder="Type your message..." autocomplete="off"/>
-      <button id="send" class="btn accent">Send</button>
-    </footer>
-
-    <!-- ===== IMAGE GENERATOR ===== -->
-    <section class="image-box">
-      <h3>🎨 Generate Image</h3>
-      <div class="row">
-        <input id="img-prompt" type="text" placeholder="Describe the image..."/>
-        <select id="img-ratio">
-          <option value="">1:1 (Square)</option>
-          <option value="16:9">16:9</option>
-          <option value="9:16">9:16</option>
-          <option value="4:3">4:3</option>
-          <option value="3:4">3:4</option>
-        </select>
-        <button id="img-go" class="btn primary">Create</button>
-      </div>
-      <div id="img-status" class="status hidden"></div>
-      <div id="img-output"></div>
-    </section>
-
+<!-- ============ SIDEBAR DRAWER ============ -->
+<aside id="sidebar" class="sidebar hidden">
+  <div class="sidebar-head">
+    <span class="side-title">Medulla AI</span>
+    <button id="closeSidebar" class="btn ghost sm">✕</button>
   </div>
 
-  <!-- ============== FULL JAVASCRIPT ============== -->
-  <script>
-    // ===== Elements =====
-    const chat = document.getElementById("chat");
-    const input = document.getElementById("input");
-    const sendBtn = document.getElementById("send");
-    const stopBtn = document.getElementById("stop-btn");
-    const muteBtn = document.getElementById("mute-btn");
-    const clearBtn = document.getElementById("clear-btn");
-    const micBtn = document.getElementById("mic-btn");
-    const voiceSelect = document.getElementById("voice-select");
-    const statusBar = document.getElementById("status");
+  <nav class="side-nav">
+    <a href="/" class="active">💬 Text Chat</a>
+    <a href="/voice">🎙 Voice Mode</a>
+    <a href="/image">🖼 Image Mode</a>
+  </nav>
 
-    const imgPrompt = document.getElementById("img-prompt");
-    const imgRatio  = document.getElementById("img-ratio");
-    const imgGo     = document.getElementById("img-go");
-    const imgOut    = document.getElementById("img-output");
-    const imgStatus = document.getElementById("img-status");
+  <hr class="side-hr">
 
-    // ===== State =====
-    let isStopped = false;
-    let isMuted = false;
-    let isListening = false;
-    let currentVoice = null;
+  <div class="side-chats">
+    <div class="side-chats-head">🗂 Previous Chats</div>
+    <div id="chatList" class="chat-list"><!-- filled by JS --></div>
+  </div>
 
-    // ===== UI Helpers =====
-    function addMessage(text, who) {
-      const el = document.createElement("div");
-      el.className = "msg " + (who==="user"?"user":who==="bot"?"bot":"note");
-      el.innerText = text;
-      chat.appendChild(el);
-      chat.scrollTop = chat.scrollHeight;
-      return el;
-    }
+  <hr class="side-hr">
 
-    function setStatus(text, show=true, cls="") {
-      if (!show) {
-        statusBar.className="status hidden"; statusBar.innerText=""; return;
-      }
-      statusBar.className="status "+cls;
-      statusBar.innerText=text;
-    }
+  <button id="openSettings" class="btn ghost full">⚙ Settings</button>
+</aside>
 
-    function sanitizeForSpeech(t){
-      if(!t) return "";
-      t=t.replace(/[*`_#•►→·•°]/g," ")
-         .replace(/\[([^\]]+)\]\((?:[^)]+)\)/g,"$1")
-         .replace(/```[\s\S]*?```/g," ")
-         .replace(/`([^`]+)`/g,"$1")
-         .replace(/\b(asterisk|star|dash|hyphen|bullet|dot)\b/gi," ")
-         .replace(/\n{2,}/g,". ")
-         .replace(/\n/g," ")
-         .replace(/[-*_]{2,}/g," ")
-         .replace(/\s+/g," ").trim();
-      return t;
-    }
+<div id="overlay" class="overlay hidden"></div>
 
-    // ===== TTS =====
-    function populateVoices(){
-      const all= speechSynthesis.getVoices() || [];
-      const isEn=v=>/en/i.test(v.lang||"");
-      const femKeys=["aria","jenny","zoe","emma","female"];
-      const maleKeys=["guy","brian","daniel","male"];
+<!-- ============ SETTINGS MODAL (FULLSCREEN M1) ============ -->
+<div id="settingsModal" class="modal hidden">
+  <div class="modal-head">
+    <h2>Settings</h2>
+    <button id="closeSettings" class="btn ghost sm">✕</button>
+  </div>
 
-      const fem=all.filter(v=>isEn(v)&&femKeys.some(k=>v.name.toLowerCase().includes(k))).slice(0,2);
-      const male=all.filter(v=>isEn(v)&&maleKeys.some(k=>v.name.toLowerCase().includes(k))).slice(0,2);
-      let pick=[...fem,...male];
-      if(pick.length<4) pick=[...pick,...all.filter(v=>isEn(v)&&!pick.includes(v))].slice(0,4);
-      if(pick.length<4) pick=[...pick,...all.filter(v=>!pick.includes(v))].slice(0,4);
+  <section class="settings-section">
+    <h3>Voice Agent</h3>
+    <select id="agentSelect" class="select">
+      <option>Luffy</option>
+      <option>Naruto</option>
+      <option>Nami</option>
+      <option>Sita</option>
+    </select>
+  </section>
 
-      voiceSelect.innerHTML="";
-      pick.forEach(v=>{
-        const o=document.createElement("option"); o.value=v.name; o.innerText=v.name;
-        voiceSelect.appendChild(o);
-      });
-      currentVoice=all.find(v=>v.name===voiceSelect.value)||null;
-    }
-    if("speechSynthesis" in window){
-      speechSynthesis.onvoiceschanged=populateVoices;
-      setTimeout(populateVoices,200);
-    }
+  <section class="settings-section">
+    <h3>Theme</h3>
+    <div class="theme-row">
+      <button class="theme-btn" data-theme="red">Red</button>
+      <button class="theme-btn" data-theme="blue">Blue</button>
+      <button class="theme-btn" data-theme="green">Green</button>
+      <button class="theme-btn" data-theme="black">Black</button>
+      <button class="theme-btn" data-theme="white">White</button>
+    </div>
+  </section>
+</div>
 
-    function speak(t){
-      if(isMuted) return;
-      const txt=sanitizeForSpeech(t);
-      if(!txt||!("speechSynthesis" in window))return;
-      speechSynthesis.cancel();
-      const u=new SpeechSynthesisUtterance(txt);
-      if(currentVoice)u.voice=currentVoice;
-      speechSynthesis.speak(u);
-    }
-    voiceSelect.addEventListener("change",()=>{
-      currentVoice=speechSynthesis.getVoices().find(v=>v.name===voiceSelect.value)||null;
-    });
+<!-- ============ TOP BAR ============ -->
+<header class="topbar">
+  <button id="openSidebar" class="btn ghost sm">☰</button>
+  <div class="brand">
+    <img src="/static/logo.png.png" class="logo">
+    <span class="brand-title">Medulla AI</span>
+  </div>
+</header>
 
-    // ===== Speech Recognition =====
-    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-    let recog=null;
-    if(SR){
-      recog=new SR();
-      recog.lang="en-US";
-      recog.interimResults=false;
-      recog.onstart=()=>{isListening=true; micBtn.classList.add("recording"); setStatus("Listening…",true);};
-      recog.onend=()=>{isListening=false; micBtn.classList.remove("recording"); setStatus("",false);};
-      recog.onresult=e=>{
-        const t=e.results[0][0].transcript;
-        input.value=t; addMessage("🎙️ "+t,"note");
-      };
-    }else{ micBtn.disabled=true; }
+<!-- ============ CHAT PANEL ============ -->
+<main class="chat-area">
+  <div id="chat" class="chat-log"></div>
 
-    function toggleMic(){
-      if(!recog)return;
-      if(!isListening) try{recog.start();}catch{}
-      else try{recog.stop();}catch{}
-    }
-    micBtn.addEventListener("click",toggleMic);
-    micBtn.addEventListener("mousedown",()=>{if(recog&&!isListening)try{recog.start();}catch{}});
-    micBtn.addEventListener("mouseup",()=>{if(recog&&isListening)try{recog.stop();}catch{}});
-    micBtn.addEventListener("touchstart",e=>{e.preventDefault();if(recog&&!isListening)try{recog.start();}catch{}},{passive:false});
-    micBtn.addEventListener("touchend",e=>{e.preventDefault();if(recog&&isListening)try{recog.stop();}catch{}},{passive:false});
+  <div class="chat-input-row">
+    <input id="input" type="text" placeholder="Type your message..." autocomplete="off">
+    <button id="send" class="btn accent">Send</button>
+  </div>
+</main>
 
-    // ===== Text Chat =====
-    async function sendMessage(){
-      const txt=input.value.trim(); if(!txt) return;
-      if(isStopped){ addMessage("You: "+txt,"user"); addMessage("Medulla: (AI stopped)","bot"); input.value=""; return; }
-      input.value="";
-      addMessage("You: "+txt,"user");
-      const thinking=addMessage("Medulla is thinking…","note");
-      try{
-        const r=await fetch("/ask",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:txt})});
-        const d=await r.json(); thinking.remove();
-        if(d.error){ addMessage("Error: "+d.error,"bot"); speak("Error"); }
-        else{ addMessage("Medulla: "+d.reply,"bot"); speak(d.reply); }
-      }catch{ thinking.remove(); addMessage("Network error","bot"); speak("Network error"); }
-    }
-    sendBtn.onclick=sendMessage;
-    input.onkeydown=e=>{if(e.key==="Enter")sendMessage();};
-
-    // ===== Image Generation =====
-    function setImgStatus(t,show=true){ imgStatus.innerText=t||""; imgStatus.className="status "+(show?"":"hidden"); }
-
-    imgGo.onclick=async()=>{
-      const prompt=(imgPrompt.value||"").trim(); if(!prompt)return;
-      setImgStatus("Generating…",true); imgOut.innerHTML="";
-      try{
-        const r=await fetch("/image",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt,aspect_ratio:imgRatio.value})});
-        const d=await r.json();
-        if(d.error){ setImgStatus("Error: "+d.error,true); return;}
-        setImgStatus("",false);
-        const img=document.createElement("img");
-        img.src=d.image; img.style.maxWidth="100%"; img.style.borderRadius="12px";
-        imgOut.appendChild(img);
-      }catch{ setImgStatus("Network error",true); }
-    };
-
-    // ===== Buttons =====
-    stopBtn.onclick=()=>{
-      isStopped=!isStopped;
-      stopBtn.classList.toggle("active",isStopped);
-      stopBtn.innerText=isStopped?"▶ Resume":"⛔ Stop";
-    };
-    muteBtn.onclick=()=>{
-      isMuted=!isMuted;
-      muteBtn.classList.toggle("active",isMuted);
-      muteBtn.innerText=isMuted?"🔈 Unmute":"🔇 Mute";
-      if(isMuted&&"speechSynthesis" in window)speechSynthesis.cancel();
-    };
-    clearBtn.onclick=()=>{
-      if("speechSynthesis" in window)speechSynthesis.cancel();
-      chat.innerHTML="";
-    };
+<script>
+/* ========== BASIC SIDEBAR TOGGLE ========== */
+const sidebar  = document.getElementById("sidebar");
+const overlay  = document.getElementById("overlay");
+document.getElementById("openSidebar").onclick = ()=>{
+  sidebar.classList.remove("hidden");
 
   </script>
 </body>
 </html>
+
