@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Medulla AI — Image Mode</title>
+  <link rel="stylesheet" href="/static/style.css"/>
+</head>
+<body class="theme-red">
+
+<!-- ============ SIDEBAR ============ -->
+<aside id="sidebar" class="sidebar hidden">
+  <div class="sidebar-head">
+    <span class="side-title">Medulla AI</span>
+    <button id="closeSidebar" class="btn ghost sm">✕</button>
+  </div>
+  <nav class="side-nav">
+    <a href="/">💬 Text Chat</a>
+    <a href="/voice">🎙 Voice Mode</a>
+    <a href="/image" class="active">🖼 Image Mode</a>
+  </nav>
+  <hr class="side-hr">
+  <button id="openSettings" class="btn ghost full">⚙ Settings</button>
+</aside>
+<div id="overlay" class="overlay hidden"></div>
+
+<!-- ============ SETTINGS MODAL (FULLSCREEN) ============ -->
+<div id="settingsModal" class="modal hidden">
+  <div class="modal-head">
+    <h2>Settings</h2>
+    <button id="closeSettings" class="btn ghost sm">✕</button>
+  </div>
+  <section class="settings-section">
+    <h3>Theme</h3>
+    <div class="theme-row">
+      <button class="theme-btn" data-theme="red">Red</button>
+      <button class="theme-btn" data-theme="blue">Blue</button>
+      <button class="theme-btn" data-theme="green">Green</button>
+      <button class="theme-btn" data-theme="black">Black</button>
+      <button class="theme-btn" data-theme="white">White</button>
+    </div>
+  </section>
+</div>
+
+<!-- ============ TOP BAR ============ -->
+<header class="topbar">
+  <button id="openSidebar" class="btn ghost sm">☰</button>
+  <div class="brand">
+    <img src="/static/logo.png.png" class="logo">
+    <span class="brand-title">Image Mode</span>
+  </div>
+</header>
+
+<!-- ============ IMAGE UI ============ -->
+<main class="image-area">
+  <div class="image-input-row">
+    <input id="imgPrompt" type="text" placeholder="Describe the image...">
+    <select id="imgRatio" class="select">
+      <option value="">1:1</option>
+      <option value="16:9">16:9</option>
+      <option value="9:16">9:16</option>
+      <option value="4:3">4:3</option>
+      <option value="3:4">3:4</option>
+    </select>
+    <button id="imgGen" class="btn primary">Generate</button>
+  </div>
+
+  <div id="imgStatus" class="status hidden"></div>
+  <div id="imgResult" class="img-grid"></div>
+</main>
+
+<script>
+/* ===== SIDEBAR & SETTINGS ===== */
+const sidebar=document.getElementById("sidebar");
+const overlay=document.getElementById("overlay");
+document.getElementById("openSidebar").onclick=()=>{sidebar.classList.remove("hidden");overlay.classList.remove("hidden");};
+document.getElementById("closeSidebar").onclick=
+overlay.onclick=()=>{sidebar.classList.add("hidden");overlay.classList.add("hidden");};
+
+const settingsModal=document.getElementById("settingsModal");
+document.getElementById("openSettings").onclick=()=>{settingsModal.classList.remove("hidden");overlay.classList.remove("hidden");};
+document.getElementById("closeSettings").onclick=()=>{settingsModal.classList.add("hidden");overlay.classList.add("hidden");};
+
+/* ===== IMAGE GENERATE ===== */
+const promptI=document.getElementById("imgPrompt");
+const ratioI=document.getElementById("imgRatio");
+const imgGen=document.getElementById("imgGen");
+const imgStatus=document.getElementById("imgStatus");
+const imgResult=document.getElementById("imgResult");
+
+function setImgStatus(t,show=true){
+  imgStatus.innerText=t||"";
+  imgStatus.className="status "+(show?"":"hidden");
+}
+
+imgGen.onclick=async()=>{
+  const prompt=promptI.value.trim();
+  if(!prompt)return;
+  setImgStatus("Generating…",true);
+  try{
+    const r=await fetch("/image",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({prompt,aspect_ratio:ratioI.value})});
+    const d=await r.json();
+    if(d.error){setImgStatus("Error: "+d.error,true);return;}
+    setImgStatus("",false);
+
+    const wrap=document.createElement("div");
+    wrap.className="img-wrap";
+
+    const img=document.createElement("img");
+    img.src=d.image;
+    img.className="gen-img";
+
+    const dl=document.createElement("a");
+    dl.className="download-btn";
+    dl.href=d.image;
+    dl.download="medulla_image.png";
+    dl.innerText="⬇";
+
+    wrap.appendChild(img);
+    wrap.appendChild(dl);
+    imgResult.appendChild(wrap);
+
+  }catch(e){
+    setImgStatus("Network error",true);
+  }
+};
+</script>
+</body>
+</html>
