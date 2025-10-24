@@ -1,144 +1,145 @@
-# app.py — Medulla AI (two OpenRouter keys: one for text, one for images)
 from flask import Flask, render_template, request, jsonify
 import os, requests, json, traceback
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
-# --------- TEXT / VOICE (existing) ----------
-OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY")  # text key you already use
-OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
-TEXT_MODEL = os.getenv("TEXT_MODEL", "openrouter/auto:online")  # pick your text model
+# ================= API KEYS =================
+TEXT_KEY  = os.getenv("OPENROUTER_API_KEY")         # TEXT / VOICE KEY (existing)
+IMG_KEY   = os.getenv("OPENROUTER_IMAGE_API_KEY")   # IMAGE ONLY KEY (new)
 
-# --------- IMAGES (new, separate key) -------
-OPENROUTER_IMAGE_KEY = os.getenv("OPENROUTER_IMAGE_API_KEY")  # NEW: image-only key
-IMAGE_MODEL = os.getenv("IMAGE_MODEL", "google/gemini-2.5-flash-image-preview")  # default image model
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# ---------------- UI ------------------------
+TEXT_MODEL = os.getenv("TEXT_MODEL" , "openrouter/auto:online")
+IMAGE_MODEL = os.getenv("IMAGE_MODEL", "google/gemini-2.5-flash-image-preview")
+
+# ================= ROUTES ===================
+
 @app.route("/")
-def index():
-    return render_template("index.html")
+def home():
+    return render_template("index.html")    # TEXT CHAT PAGE
 
-# ---------------- TEXT ----------------------
-def call_openrouter_text(messages, temperature=0.7, max_tokens=700, timeout=60):
-    if not OPENROUTER_KEY:
-        return None, "OPENROUTER_API_KEY not set."
+@app.route("/voice")
+def voice_page():
+    return render_template("voice.html")    # VOICE MODE PAGE
+
+@app.route("/image")
+def image_page():
+    return render_template("image.html")    # IMAGE MODE PAGE
+
+
+# ================= TEXT / VOICE AI ==============
+def call_openrouter_text(messages):
+    if not TEXT_KEY:
+        return None, "OPENROUTER_API_KEY not set"
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_KEY}",
+        "Authorization": f"Bearer {TEXT_KEY}",
         "Content-Type": "application/json",
     }
     payload = {
         "model": TEXT_MODEL,
         "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens
+        "temperature": 0.7,
+        "max_tokens": 800
     }
-    r = requests.post(OPENROUTER_CHAT_URL, headers=headers, json=payload, timeout=timeout)
-    if r.status_code != 200:
-        try:
-            return None, f"OpenRouter error {r.status_code}: {r.json()}"
-        except:
-            return None, f"OpenRouter error {r.status_code}: {r.text}"
-    data = r.json()
-    # Standard OpenRouter chat shape
     try:
-        return data["choices"][0]["message"]["content"].strip(), None
-    except:
-        try:
-            return data["choices"][0]["text"].strip(), None
-        except:
-            return json.dumps(data)[:1500], None
+        r = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=60)
+        data = r.json()
+        if r.status_code != 200:
+            return None, f"ERR {r.status_code}: {data}"
+        # Standard openrouter responses
+        msg = data["choices"][0]["message"]
+        return msg.get("content","").strip(), None
+    except Exception as e:
+        return None, f"Exception: {e}"
+
 
 @app.route("/ask", methods=["POST"])
 def ask():
     try:
         body = request.get_json(force=True)
-        msg = (body.get("message") or "").strip()
-        if not msg:
-            return jsonify({"error":"No message provided"}), 400
+        user_msg = (body.get("message") or "").strip()
+        agent = (body.get("agent") or "Luffy").strip()
+
+        if not user_msg:
+            return jsonify({"error":"Empty message"}), 400
+
+        # PERSONALITY PROMPTS
+        persona_map = {
+            "Luffy":  "You speak like Monkey D. Luffy. Energetic, friendly, optimistic.",
+            "Naruto": "You speak like Naruto Uzumaki. Determined, hopeful, brotherhood tone.",
+            "Nami":   "You speak like Nami. Smart, practical, sharp mind but friendly.",
+            "Sita":   "You speak like Sita. Calm, polite, dignified, compassionate."
+        }
+        persona = persona_map.get(agent,"")
+
         messages = [
-            {"role":"system","content":"You are Medulla AI — helpful, honest, friendly. Keep language simple."},
-            {"role":"user","content": msg}
+            {"role":"system","content": persona + " Keep answers clear and simple; avoid emojis."},
+            {"role":"user","content": user_msg}
         ]
+
         reply, err = call_openrouter_text(messages)
         if err:
-            return jsonify({"error": err}), 500
-        return jsonify({"reply": reply})
+            return jsonify({"error":err}), 500
+        return jsonify({"reply":reply})
+
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error":str(e)}), 500
 
-# ---------------- IMAGES --------------------
-def call_openrouter_image(prompt, aspect_ratio=None, timeout=120):
-    """
-    Uses the *image key* and an image-capable model to generate a PNG data URL.
-    OpenRouter docs: use /chat/completions with modalities ["image","text"].
-    """
-    if not OPENROUTER_IMAGE_KEY:
-        return None, "OPENROUTER_IMAGE_API_KEY not set."
 
+# ============== IMAGE GENERATION ==============
+def call_openrouter_image(prompt, aspect_ratio=None):
+    if not IMG_KEY:
+        return None, "OPENROUTER_IMAGE_API_KEY not set"
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_IMAGE_KEY}",
+        "Authorization": f"Bearer {IMG_KEY}",
         "Content-Type": "application/json",
     }
-
     payload = {
         "model": IMAGE_MODEL,
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
-        "modalities": ["image", "text"]  # required to request image output
+        "messages":[{"role":"user","content":prompt}],
+        "modalities":["image","text"]
     }
-
-    # Optional aspect ratio (some models support this; Gemini image preview does)
     if aspect_ratio:
         payload["image_config"] = {"aspect_ratio": aspect_ratio}
 
-    r = requests.post(OPENROUTER_CHAT_URL, headers=headers, json=payload, timeout=timeout)
-    if r.status_code != 200:
-        try:
-            return None, f"Image API error {r.status_code}: {r.json()}"
-        except:
-            return None, f"Image API error {r.status_code}: {r.text}"
-
-    data = r.json()
-    # Expected shape for image gen per OpenRouter docs: assistant message has `images` with data URLs
     try:
+        r = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=120)
+        data = r.json()
+        if r.status_code != 200:
+            return None, f"ERR {r.status_code}: {data}"
         msg = data["choices"][0]["message"]
         imgs = msg.get("images") or []
         if not imgs:
-            # Some models may put it under delta in streams; for non-stream we expect images here
-            return None, "No images field in response."
-        # Take the first image
-        url = imgs[0]["image_url"]["url"]  # data:image/png;base64,....
-        return url, None
-    except Exception:
-        return None, "Unexpected image response format."
+            return None,"No image in response"
+        return imgs[0]["image_url"]["url"],None
+    except Exception as e:
+        return None, f"Exception: {e}"
 
-@app.route("/image", methods=["POST"])
-def image():
+
+@app.route("/image",methods=["POST"])
+def make_image():
     try:
         body = request.get_json(force=True)
         prompt = (body.get("prompt") or "").strip()
-        aspect_ratio = (body.get("aspect_ratio") or "").strip() or None  # e.g., "16:9"
+        ratio = (body.get("aspect_ratio") or "").strip() or None
         if not prompt:
-            return jsonify({"error": "No prompt provided"}), 400
-
-        img_data_url, err = call_openrouter_image(prompt, aspect_ratio=aspect_ratio)
+            return jsonify({"error":"Empty prompt"}),400
+        url,err = call_openrouter_image(prompt,ratio)
         if err:
-            return jsonify({"error": err}), 500
-
-        # Return the base64 data URL for direct <img src="...">
-        return jsonify({"image": img_data_url})
+            return jsonify({"error":err}),500
+        return jsonify({"image":url})
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error":str(e)}),500
 
-# ---------------- HEALTH --------------------
+
+# ============= HEALTH CHECK ==================
 @app.route("/health")
 def health():
-    return "ok", 200
+    return "ok",200
 
+
+# ============== DEV MODE LOCAL RUN ============
 if __name__ == "__main__":
-    # Local testing only; production runs via gunicorn (Procfile)
-    app.run(host="0.0.0.0", port=5000, debug=True)
-
+    app.run(host="0.0.0.0",port=5000,debug=True)
