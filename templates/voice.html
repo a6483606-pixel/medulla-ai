@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Medulla AI — Voice Mode</title>
+  <link rel="stylesheet" href="/static/style.css"/>
+</head>
+<body class="theme-red voice-page">
+
+<!-- ============ SIDEBAR ============ -->
+<aside id="sidebar" class="sidebar hidden">
+  <div class="sidebar-head">
+    <span class="side-title">Medulla AI</span>
+    <button id="closeSidebar" class="btn ghost sm">✕</button>
+  </div>
+  <nav class="side-nav">
+    <a href="/">💬 Text Chat</a>
+    <a href="/voice" class="active">🎙 Voice Mode</a>
+    <a href="/image">🖼 Image Mode</a>
+  </nav>
+  <hr class="side-hr">
+  <button id="openSettings" class="btn ghost full">⚙ Settings</button>
+</aside>
+
+<div id="overlay" class="overlay hidden"></div>
+
+<!-- ============ FULLSCREEN SETTINGS MODAL ============ -->
+<div id="settingsModal" class="modal hidden">
+  <div class="modal-head">
+    <h2>Settings</h2>
+    <button id="closeSettings" class="btn ghost sm">✕</button>
+  </div>
+  <section class="settings-section">
+    <h3>Voice Agent</h3>
+    <select id="agentSelect" class="select">
+      <option>Luffy</option>
+      <option>Naruto</option>
+      <option>Nami</option>
+      <option>Sita</option>
+    </select>
+  </section>
+  <section class="settings-section">
+    <h3>Theme</h3>
+    <div class="theme-row">
+      <button class="theme-btn" data-theme="red">Red</button>
+      <button class="theme-btn" data-theme="blue">Blue</button>
+      <button class="theme-btn" data-theme="green">Green</button>
+      <button class="theme-btn" data-theme="black">Black</button>
+      <button class="theme-btn" data-theme="white">White</button>
+    </div>
+  </section>
+</div>
+
+<!-- ============ TOP BAR ============ -->
+<header class="topbar">
+  <button id="openSidebar" class="btn ghost sm">☰</button>
+  <div class="brand">
+    <img src="/static/logo.png.png" class="logo">
+    <span class="brand-title">Voice Mode</span>
+  </div>
+</header>
+
+<!-- ============ VOICE UI ============ -->
+<main class="voice-area">
+  <div class="brain-container">
+    <div class="brain"></div>
+    <div class="pulse"></div>
+  </div>
+
+  <div class="voice-buttons">
+    <button id="micBtn" class="btn primary">🎙 Speak</button>
+    <button id="stopBtn" class="btn ghost">⛔ Stop</button>
+    <button id="muteBtn" class="btn ghost">🔇 Mute</button>
+  </div>
+</main>
+
+<script>
+/* ===== SIDEBAR ===== */
+const sidebar=document.getElementById("sidebar");
+const overlay=document.getElementById("overlay");
+document.getElementById("openSidebar").onclick=()=>{sidebar.classList.remove("hidden");overlay.classList.remove("hidden");};
+document.getElementById("closeSidebar").onclick=
+overlay.onclick=()=>{sidebar.classList.add("hidden");overlay.classList.add("hidden");};
+
+/* ===== SETTINGS MODAL ===== */
+const settingsModal=document.getElementById("settingsModal");
+document.getElementById("openSettings").onclick=()=>{settingsModal.classList.remove("hidden");overlay.classList.remove("hidden");};
+document.getElementById("closeSettings").onclick=()=>{settingsModal.classList.add("hidden");overlay.classList.add("hidden");};
+
+/* ===== STATE ===== */
+let isMuted=false;
+let isStopped=false;
+let isListening=false;
+const agentSelect=document.getElementById("agentSelect");
+
+/* ===== SPEECH RECOGNITION ===== */
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+let recog=null;
+if(SR){
+  recog=new SR();
+  recog.lang="en-US";
+  recog.onstart=()=>{isListening=true;document.querySelector(".pulse").classList.add("show");};
+  recog.onend=()=>{isListening=false;document.querySelector(".pulse").classList.remove("show");};
+  recog.onresult=async e=>{
+    const text=e.results[0][0].transcript;
+    if(isStopped)return;
+    const r=await fetch("/ask",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({message:text,agent:agentSelect.value})});
+    const d=await r.json();
+    if(!isMuted && d.reply){
+      const u=new SpeechSynthesisUtterance(d.reply);
+      speechSynthesis.cancel();
+      speechSynthesis.speak(u);
+      document.querySelector(".brain").classList.add("talk");
+      setTimeout(()=>document.querySelector(".brain").classList.remove("talk"),800);
+    }
+  };
+}
+
+/* ===== BUTTONS ===== */
+document.getElementById("micBtn").onclick=()=>{
+  if(!recog)return;
+  if(!isListening) try{recog.start();}catch{}
+  else try{recog.stop();}catch{}
+}
+document.getElementById("stopBtn").onclick=()=>{isStopped=!isStopped;}
+document.getElementById("muteBtn").onclick=()=>{isMuted=!isMuted; speechSynthesis.cancel();}
+</script>
+</body>
+</html>
