@@ -3,94 +3,110 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Medulla AI — Chat</title>
+  <title>Medulla AI — Chat (Failsafe)</title>
   <link rel="stylesheet" href="/static/style.css"/>
+  <style>
+    /* tiny built-in styles so it’s usable even if style.css fails */
+    body{font-family:system-ui,Arial;margin:0;padding:16px;background:#111;color:#f5f5f5}
+    .row{display:flex;gap:8px;margin:10px 0}
+    .log{min-height:50vh;border:1px solid #333;border-radius:8px;padding:10px;overflow:auto;background:#0b0b0b}
+    .msg{padding:8px;border-radius:8px;margin:6px 0;max-width:90%}
+    .me{background:#143a77}
+    .bot{background:#5b1f1f}
+    .note{color:#aaa;font-style:italic;text-align:center}
+    input,select,button{padding:10px;border-radius:8px;border:1px solid #333;background:#1a1a1a;color:#fff}
+    button{cursor:pointer;font-weight:800}
+    header{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+    img.logo{height:28px}
+    .err{color:#ffb3b3;white-space:pre-wrap}
+  </style>
 </head>
-<body class="theme-red">
-
-<!-- ============ SIDEBAR DRAWER ============ -->
-<aside id="sidebar" class="sidebar hidden">
-  <div class="sidebar-head">
-    <span class="side-title">Medulla AI</span>
-    <button id="closeSidebar" class="btn ghost sm">✕</button>
-  </div>
-
-  <nav class="side-nav">
-    <a href="/" class="active">💬 Text Chat</a>
-    <a href="/voice">🎙 Voice Mode</a>
-    <a href="/image">🖼 Image Mode</a>
-  </nav>
-
-  <hr class="side-hr">
-
-  <div class="side-chats">
-    <div class="side-chats-head">🗂 Previous Chats</div>
-    <div id="chatList" class="chat-list"><!-- filled by JS --></div>
-  </div>
-
-  <hr class="side-hr">
-
-  <button id="openSettings" class="btn ghost full">⚙ Settings</button>
-</aside>
-
-<div id="overlay" class="overlay hidden"></div>
-
-<!-- ============ SETTINGS MODAL (FULLSCREEN M1) ============ -->
-<div id="settingsModal" class="modal hidden">
-  <div class="modal-head">
-    <h2>Settings</h2>
-    <button id="closeSettings" class="btn ghost sm">✕</button>
-  </div>
-
-  <section class="settings-section">
-    <h3>Voice Agent</h3>
-    <select id="agentSelect" class="select">
-      <option>Luffy</option>
-      <option>Naruto</option>
-      <option>Nami</option>
-      <option>Sita</option>
-    </select>
-  </section>
-
-  <section class="settings-section">
-    <h3>Theme</h3>
-    <div class="theme-row">
-      <button class="theme-btn" data-theme="red">Red</button>
-      <button class="theme-btn" data-theme="blue">Blue</button>
-      <button class="theme-btn" data-theme="green">Green</button>
-      <button class="theme-btn" data-theme="black">Black</button>
-      <button class="theme-btn" data-theme="white">White</button>
+<body>
+  <header>
+    <img class="logo" src="/static/logo.png.png" alt="Medulla logo" onerror="this.style.display='none'">
+    <h1 style="margin:0;font-size:18px;">Medulla AI — Text Chat</h1>
+    <div style="margin-left:auto;display:flex;gap:8px;">
+      <a href="/" style="color:#9cf">Text</a>
+      <a href="/voice" style="color:#9cf">Voice</a>
+      <a href="/image" style="color:#9cf">Image</a>
     </div>
-  </section>
-</div>
+  </header>
 
-<!-- ============ TOP BAR ============ -->
-<header class="topbar">
-  <button id="openSidebar" class="btn ghost sm">☰</button>
-  <div class="brand">
-    <img src="/static/logo.png.png" class="logo">
-    <span class="brand-title">Medulla AI</span>
+  <div class="row">
+    <label>Agent:
+      <select id="agent">
+        <option>Luffy</option>
+        <option>Naruto</option>
+        <option>Nami</option>
+        <option>Sita</option>
+      </select>
+    </label>
   </div>
-</header>
 
-<!-- ============ CHAT PANEL ============ -->
-<main class="chat-area">
-  <div id="chat" class="chat-log"></div>
+  <div id="log" class="log" aria-live="polite"></div>
 
-  <div class="chat-input-row">
-    <input id="input" type="text" placeholder="Type your message..." autocomplete="off">
-    <button id="send" class="btn accent">Send</button>
+  <div class="row">
+    <input id="msg" type="text" placeholder="Type your message..." style="flex:1" autocomplete="off">
+    <button id="send">Send</button>
   </div>
-</main>
 
-<script>
-/* ========== BASIC SIDEBAR TOGGLE ========== */
-const sidebar  = document.getElementById("sidebar");
-const overlay  = document.getElementById("overlay");
-document.getElementById("openSidebar").onclick = ()=>{
-  sidebar.classList.remove("hidden");
+  <div id="status" class="note"></div>
+  <div id="error" class="err"></div>
 
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const log = document.getElementById('log');
+      const msg = document.getElementById('msg');
+      const send = document.getElementById('send');
+      const status = document.getElementById('status');
+      const error = document.getElementById('error');
+      const agent = document.getElementById('agent');
+
+      function add(text, who){
+        const d = document.createElement('div');
+        d.className = 'msg ' + who;
+        d.textContent = text;
+        log.appendChild(d);
+        log.scrollTop = log.scrollHeight;
+      }
+
+      async function go(){
+        const t = (msg.value || '').trim();
+        if(!t) return;
+        add('You: ' + t, 'me');
+        msg.value = '';
+        status.textContent = 'Thinking...';
+        error.textContent = '';
+
+        try {
+          const res = await fetch('/ask', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ message: t, agent: agent.value })
+          });
+          let data = null;
+          try { data = await res.json(); } catch(e) {
+            error.textContent = 'Invalid JSON from server.';
+            status.textContent = '';
+            return;
+          }
+          status.textContent = '';
+          if(data.error){
+            add('Error: ' + data.error, 'bot');
+            error.textContent = 'Server said: ' + (typeof data.error==='string' ? data.error : JSON.stringify(data.error));
+          } else {
+            add('Medulla: ' + (data.reply || '(no reply)'), 'bot');
+          }
+        } catch (e) {
+          status.textContent = '';
+          error.textContent = 'Network error:\n' + e;
+          add('Network error.', 'bot');
+        }
+      }
+
+      send.addEventListener('click', go);
+      msg.addEventListener('keydown', (e)=>{ if(e.key==='Enter') go(); });
+    });
   </script>
 </body>
 </html>
-
