@@ -8,41 +8,62 @@
 </head>
 <body>
   <div class="container">
+
+    <!-- ===== TOP BAR ===== -->
     <header class="topbar">
       <div class="brand">
         <h1>🧠 Medulla AI</h1>
-        <p class="tag">Simple. Fast. Friendly.</p>
+        <p class="tag">Simple • Fast • Friendly</p>
       </div>
-
-      <div class="actions" role="toolbar" aria-label="Controls">
-        <button id="stop-btn" class="btn ghost" title="Stop/Resume AI">⛔ Stop</button>
-        <button id="mute-btn" class="btn ghost" title="Mute/Unmute TTS">🔇 Mute</button>
-        <button id="clear-btn" class="btn danger" title="Delete chat">🗑 Delete</button>
+      <div class="actions">
+        <button id="stop-btn" class="btn ghost">⛔ Stop</button>
+        <button id="mute-btn" class="btn ghost">🔇 Mute</button>
+        <button id="clear-btn" class="btn danger">🗑 Delete</button>
       </div>
     </header>
 
+    <!-- ===== VOICE + STATUS ROW ===== -->
     <section class="controls-row">
       <div class="voice-controls">
-        <button id="mic-btn" class="btn primary" title="Hold to speak or tap to toggle">
-          🎙️ Speak
-        </button>
-
+        <button id="mic-btn" class="btn primary">🎙️ Speak</button>
         <label class="select-label">
           AI Voice:
           <select id="voice-select" class="select"></select>
         </label>
       </div>
-      <div id="status" class="status hidden" aria-live="polite"></div>
+      <div id="status" class="status hidden"></div>
     </section>
 
+    <!-- ===== CHAT LOG ===== -->
     <main id="chat" class="chat" role="log" aria-live="polite"></main>
 
+    <!-- ===== COMPOSER ===== -->
     <footer class="composer">
-      <input id="input" type="text" placeholder="Type your message…" autocomplete="off"/>
+      <input id="input" type="text" placeholder="Type your message..." autocomplete="off"/>
       <button id="send" class="btn accent">Send</button>
     </footer>
+
+    <!-- ===== IMAGE GENERATOR ===== -->
+    <section class="image-box">
+      <h3>🎨 Generate Image</h3>
+      <div class="row">
+        <input id="img-prompt" type="text" placeholder="Describe the image..."/>
+        <select id="img-ratio">
+          <option value="">1:1 (Square)</option>
+          <option value="16:9">16:9</option>
+          <option value="9:16">9:16</option>
+          <option value="4:3">4:3</option>
+          <option value="3:4">3:4</option>
+        </select>
+        <button id="img-go" class="btn primary">Create</button>
+      </div>
+      <div id="img-status" class="status hidden"></div>
+      <div id="img-output"></div>
+    </section>
+
   </div>
 
+  <!-- ============== FULL JAVASCRIPT ============== -->
   <script>
     // ===== Elements =====
     const chat = document.getElementById("chat");
@@ -55,237 +76,165 @@
     const voiceSelect = document.getElementById("voice-select");
     const statusBar = document.getElementById("status");
 
+    const imgPrompt = document.getElementById("img-prompt");
+    const imgRatio  = document.getElementById("img-ratio");
+    const imgGo     = document.getElementById("img-go");
+    const imgOut    = document.getElementById("img-output");
+    const imgStatus = document.getElementById("img-status");
+
     // ===== State =====
     let isStopped = false;
     let isMuted = false;
     let isListening = false;
     let currentVoice = null;
 
-    // ===== Helpers =====
+    // ===== UI Helpers =====
     function addMessage(text, who) {
-      const bubble = document.createElement("div");
-      bubble.className = "msg " + (who === "user" ? "user" : who === "bot" ? "bot" : "note");
-      bubble.innerText = text;
-      chat.appendChild(bubble);
+      const el = document.createElement("div");
+      el.className = "msg " + (who==="user"?"user":who==="bot"?"bot":"note");
+      el.innerText = text;
+      chat.appendChild(el);
       chat.scrollTop = chat.scrollHeight;
-      return bubble;
+      return el;
     }
 
-    function setStatus(text, show = true, type = "") {
+    function setStatus(text, show=true, cls="") {
       if (!show) {
-        statusBar.className = "status hidden";
-        statusBar.innerText = "";
-        return;
+        statusBar.className="status hidden"; statusBar.innerText=""; return;
       }
-      statusBar.className = "status " + type;
-      statusBar.innerText = text;
+      statusBar.className="status "+cls;
+      statusBar.innerText=text;
     }
 
-    // ===== Sanitizer for TTS =====
-    function sanitizeForSpeech(text) {
-      if (!text) return "";
-      let t = text.replace(/[*`_#•►→·•°]/g, " ");
-      t = t.replace(/\[([^\]]+)\]\((?:[^)]+)\)/g, "$1");      // [x](y) -> x
-      t = t.replace(/```[\s\S]*?```/g, " ");                  // code fences
-      t = t.replace(/`([^`]+)`/g, "$1");                      // inline code
-      t = t.replace(/\b(asterisk|star|dash|hyphen|bullet|dot)\b/gi, " ");
-      t = t.replace(/\n{2,}/g, ". ");
-      t = t.replace(/\n/g, " ");
-      t = t.replace(/[-*_]{2,}/g, " ");
-      t = t.replace(/\s+/g, " ").trim();
+    function sanitizeForSpeech(t){
+      if(!t) return "";
+      t=t.replace(/[*`_#•►→·•°]/g," ")
+         .replace(/\[([^\]]+)\]\((?:[^)]+)\)/g,"$1")
+         .replace(/```[\s\S]*?```/g," ")
+         .replace(/`([^`]+)`/g,"$1")
+         .replace(/\b(asterisk|star|dash|hyphen|bullet|dot)\b/gi," ")
+         .replace(/\n{2,}/g,". ")
+         .replace(/\n/g," ")
+         .replace(/[-*_]{2,}/g," ")
+         .replace(/\s+/g," ").trim();
       return t;
     }
 
-    // ===== Speech Synthesis (TTS) =====
-    function populateVoices() {
-      const voices = window.speechSynthesis.getVoices() || [];
-      // Prefer 2 female + 2 male English voices if available
-      const isEn = v => /en(-|_)?/i.test(v.lang || "");
-      const femKeys = ["aria", "jenny", "zoe", "sara", "natasha", "salli", "emma", "en-GB female", "en-US female"];
-      const maleKeys = ["guy", "brian", "matthew", "arthur", "daniel", "en-GB male", "en-US male", "george"];
+    // ===== TTS =====
+    function populateVoices(){
+      const all= speechSynthesis.getVoices() || [];
+      const isEn=v=>/en/i.test(v.lang||"");
+      const femKeys=["aria","jenny","zoe","emma","female"];
+      const maleKeys=["guy","brian","daniel","male"];
 
-      const fem = voices.filter(v => isEn(v) && femKeys.some(k => (v.name || "").toLowerCase().includes(k))).slice(0, 2);
-      const male = voices.filter(v => isEn(v) && maleKeys.some(k => (v.name || "").toLowerCase().includes(k))).slice(0, 2);
+      const fem=all.filter(v=>isEn(v)&&femKeys.some(k=>v.name.toLowerCase().includes(k))).slice(0,2);
+      const male=all.filter(v=>isEn(v)&&maleKeys.some(k=>v.name.toLowerCase().includes(k))).slice(0,2);
+      let pick=[...fem,...male];
+      if(pick.length<4) pick=[...pick,...all.filter(v=>isEn(v)&&!pick.includes(v))].slice(0,4);
+      if(pick.length<4) pick=[...pick,...all.filter(v=>!pick.includes(v))].slice(0,4);
 
-      let picked = [...fem, ...male];
-
-      // If we didn't get 4, fill with any English voices, then any remaining
-      if (picked.length < 4) {
-        const fill = voices.filter(v => !picked.includes(v) && isEn(v)).slice(0, 4 - picked.length);
-        picked = picked.concat(fill);
-      }
-      if (picked.length < 4) {
-        const fill2 = voices.filter(v => !picked.includes(v)).slice(0, 4 - picked.length);
-        picked = picked.concat(fill2);
-      }
-
-      voiceSelect.innerHTML = "";
-      picked.forEach((v, idx) => {
-        const opt = document.createElement("option");
-        opt.value = v.name;
-        opt.innerText = v.name || `Voice ${idx + 1}`;
-        voiceSelect.appendChild(opt);
+      voiceSelect.innerHTML="";
+      pick.forEach(v=>{
+        const o=document.createElement("option"); o.value=v.name; o.innerText=v.name;
+        voiceSelect.appendChild(o);
       });
-
-      // set currentVoice
-      const chosenName = voiceSelect.value;
-      currentVoice = (window.speechSynthesis.getVoices() || []).find(v => v.name === chosenName) || null;
+      currentVoice=all.find(v=>v.name===voiceSelect.value)||null;
+    }
+    if("speechSynthesis" in window){
+      speechSynthesis.onvoiceschanged=populateVoices;
+      setTimeout(populateVoices,200);
     }
 
-    function speak(text) {
-      if (isMuted) return;
-      const t = sanitizeForSpeech(text);
-      if (!("speechSynthesis" in window) || !t) return;
-      try {
-        window.speechSynthesis.cancel();
-        const u = new SpeechSynthesisUtterance(t);
-        if (currentVoice) u.voice = currentVoice;
-        u.rate = 1;
-        u.pitch = 1;
-        window.speechSynthesis.speak(u);
-      } catch (e) {
-        console.warn("Speech failed:", e);
-      }
+    function speak(t){
+      if(isMuted) return;
+      const txt=sanitizeForSpeech(t);
+      if(!txt||!("speechSynthesis" in window))return;
+      speechSynthesis.cancel();
+      const u=new SpeechSynthesisUtterance(txt);
+      if(currentVoice)u.voice=currentVoice;
+      speechSynthesis.speak(u);
     }
-
-    voiceSelect.addEventListener("change", () => {
-      const voices = window.speechSynthesis.getVoices() || [];
-      currentVoice = voices.find(v => v.name === voiceSelect.value) || null;
-      setStatus(`AI voice set to: ${voiceSelect.value}`, true);
-      setTimeout(() => setStatus("", false), 1200);
+    voiceSelect.addEventListener("change",()=>{
+      currentVoice=speechSynthesis.getVoices().find(v=>v.name===voiceSelect.value)||null;
     });
 
-    if ("speechSynthesis" in window) {
-      window.speechSynthesis.onvoiceschanged = populateVoices;
-      // Some browsers need a kick to load voices
-      setTimeout(populateVoices, 300);
-    }
-
-    // ===== Speech Recognition (STT) =====
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    let recog = null;
-    if (SR) {
-      recog = new SR();
-      recog.lang = "en-US";           // change if you want another language
-      recog.interimResults = false;
-      recog.maxAlternatives = 1;
-
-      recog.onstart = () => {
-        isListening = true;
-        micBtn.classList.add("recording");
-        setStatus("Listening… speak now", true, "info");
+    // ===== Speech Recognition =====
+    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    let recog=null;
+    if(SR){
+      recog=new SR();
+      recog.lang="en-US";
+      recog.interimResults=false;
+      recog.onstart=()=>{isListening=true; micBtn.classList.add("recording"); setStatus("Listening…",true);};
+      recog.onend=()=>{isListening=false; micBtn.classList.remove("recording"); setStatus("",false);};
+      recog.onresult=e=>{
+        const t=e.results[0][0].transcript;
+        input.value=t; addMessage("🎙️ "+t,"note");
       };
-      recog.onend = () => {
-        isListening = false;
-        micBtn.classList.remove("recording");
-        setStatus("", false);
-      };
-      recog.onerror = (e) => {
-        isListening = false;
-        micBtn.classList.remove("recording");
-        setStatus("Mic error: " + (e.error || "unknown"), true, "warn");
-        setTimeout(() => setStatus("", false), 1500);
-      };
-      recog.onresult = (e) => {
-        const transcript = e.results?.[0]?.[0]?.transcript || "";
-        if (transcript) {
-          input.value = transcript;
-          addMessage("🎙️ " + transcript, "note");
-        }
-      };
-    } else {
-      micBtn.disabled = true;
-      micBtn.title = "Speech Recognition not supported in this browser";
+    }else{ micBtn.disabled=true; }
+
+    function toggleMic(){
+      if(!recog)return;
+      if(!isListening) try{recog.start();}catch{}
+      else try{recog.stop();}catch{}
     }
+    micBtn.addEventListener("click",toggleMic);
+    micBtn.addEventListener("mousedown",()=>{if(recog&&!isListening)try{recog.start();}catch{}});
+    micBtn.addEventListener("mouseup",()=>{if(recog&&isListening)try{recog.stop();}catch{}});
+    micBtn.addEventListener("touchstart",e=>{e.preventDefault();if(recog&&!isListening)try{recog.start();}catch{}},{passive:false});
+    micBtn.addEventListener("touchend",e=>{e.preventDefault();if(recog&&isListening)try{recog.stop();}catch{}},{passive:false});
 
-    function toggleMic() {
-      if (!recog) return;
-      if (!isListening) {
-        try { recog.start(); } catch {}
-      } else {
-        try { recog.stop(); } catch {}
-      }
+    // ===== Text Chat =====
+    async function sendMessage(){
+      const txt=input.value.trim(); if(!txt) return;
+      if(isStopped){ addMessage("You: "+txt,"user"); addMessage("Medulla: (AI stopped)","bot"); input.value=""; return; }
+      input.value="";
+      addMessage("You: "+txt,"user");
+      const thinking=addMessage("Medulla is thinking…","note");
+      try{
+        const r=await fetch("/ask",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:txt})});
+        const d=await r.json(); thinking.remove();
+        if(d.error){ addMessage("Error: "+d.error,"bot"); speak("Error"); }
+        else{ addMessage("Medulla: "+d.reply,"bot"); speak(d.reply); }
+      }catch{ thinking.remove(); addMessage("Network error","bot"); speak("Network error"); }
     }
+    sendBtn.onclick=sendMessage;
+    input.onkeydown=e=>{if(e.key==="Enter")sendMessage();};
 
-    // Hold-to-talk as well as toggle:
-    micBtn.addEventListener("click", toggleMic);
-    micBtn.addEventListener("mousedown", () => { if (recog && !isListening) try{recog.start();}catch{} });
-    micBtn.addEventListener("mouseup",   () => { if (recog && isListening)  try{recog.stop();}catch{} });
-    micBtn.addEventListener("touchstart", (e) => { e.preventDefault(); if (recog && !isListening) try{recog.start();}catch{} }, {passive:false});
-    micBtn.addEventListener("touchend",   (e) => { e.preventDefault(); if (recog && isListening)  try{recog.stop();}catch{} }, {passive:false});
+    // ===== Image Generation =====
+    function setImgStatus(t,show=true){ imgStatus.innerText=t||""; imgStatus.className="status "+(show?"":"hidden"); }
 
-    // ===== Chat actions =====
-    async function sendMessage() {
-      const text = input.value.trim();
-      if (!text) return;
+    imgGo.onclick=async()=>{
+      const prompt=(imgPrompt.value||"").trim(); if(!prompt)return;
+      setImgStatus("Generating…",true); imgOut.innerHTML="";
+      try{
+        const r=await fetch("/image",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt,aspect_ratio:imgRatio.value})});
+        const d=await r.json();
+        if(d.error){ setImgStatus("Error: "+d.error,true); return;}
+        setImgStatus("",false);
+        const img=document.createElement("img");
+        img.src=d.image; img.style.maxWidth="100%"; img.style.borderRadius="12px";
+        imgOut.appendChild(img);
+      }catch{ setImgStatus("Network error",true); }
+    };
 
-      if (isStopped) {
-        addMessage("You: " + text, "user");
-        addMessage("Medulla: (AI is stopped — resume to get an answer)", "bot");
-        input.value = "";
-        return;
-      }
+    // ===== Buttons =====
+    stopBtn.onclick=()=>{
+      isStopped=!isStopped;
+      stopBtn.classList.toggle("active",isStopped);
+      stopBtn.innerText=isStopped?"▶ Resume":"⛔ Stop";
+    };
+    muteBtn.onclick=()=>{
+      isMuted=!isMuted;
+      muteBtn.classList.toggle("active",isMuted);
+      muteBtn.innerText=isMuted?"🔈 Unmute":"🔇 Mute";
+      if(isMuted&&"speechSynthesis" in window)speechSynthesis.cancel();
+    };
+    clearBtn.onclick=()=>{
+      if("speechSynthesis" in window)speechSynthesis.cancel();
+      chat.innerHTML="";
+    };
 
-      input.value = "";
-      addMessage("You: " + text, "user");
-      const thinking = addMessage("Medulla is thinking…", "note");
-
-      try {
-        const res = await fetch("/ask", {
-          method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({message: text})
-        });
-        const data = await res.json();
-        thinking.remove();
-
-        if (data.error) {
-          addMessage("Error: " + data.error, "bot");
-          speak("Sorry, I encountered an error.");
-        } else {
-          addMessage("Medulla: " + data.reply, "bot");
-          speak(data.reply);
-        }
-      } catch (err) {
-        try { thinking.remove(); } catch {}
-        addMessage("Network error. Please try again.", "bot");
-        speak("Network error. Please try again.");
-        console.error(err);
-      }
-    }
-
-    sendBtn.addEventListener("click", sendMessage);
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") sendMessage();
-    });
-
-    stopBtn.addEventListener("click", () => {
-      isStopped = !isStopped;
-      stopBtn.classList.toggle("active", isStopped);
-      stopBtn.innerText = isStopped ? "▶ Resume" : "⛔ Stop";
-      setStatus(isStopped ? "AI stopped — resume to enable answers." : "AI running", isStopped, "warn");
-      if (!isStopped) setStatus("", false);
-    });
-
-    muteBtn.addEventListener("click", () => {
-      isMuted = !isMuted;
-      muteBtn.classList.toggle("active", isMuted);
-      muteBtn.innerText = isMuted ? "🔈 Unmute" : "🔇 Mute";
-      setStatus(isMuted ? "Voice muted" : "Voice on", true);
-      setTimeout(() => setStatus("", false), 800);
-      if (isMuted && "speechSynthesis" in window) window.speechSynthesis.cancel();
-    });
-
-    clearBtn.addEventListener("click", () => {
-      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-      chat.innerHTML = "";
-      setStatus("Chat cleared", true);
-      setTimeout(() => setStatus("", false), 800);
-    });
-
-    // Focus on load
-    window.addEventListener("load", () => input.focus());
   </script>
 </body>
 </html>
-
